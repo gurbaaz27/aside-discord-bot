@@ -101,5 +101,3 @@ For actions that need a decision, the agent is instructed not to use Aside's des
 bun run typecheck
 bun test
 ```
-
-The reference Telegram bridge in `.repos/` is kept for architectural comparison only. This implementation uses Discord threads and Discord interactions rather than copying Telegram transport code.
