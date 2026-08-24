@@ -208,9 +208,18 @@ async function presentApproval(thread: ThreadChannel, approval: { action: string
   const lines = [`🔐 Approval needed\n\nAction: ${approval.action}`];
   if (approval.details) lines.push(`Details: ${approval.details}`);
   lines.push("\nChoose an action below.");
-  const message = await thread.send({ content: lines.join("\n").slice(0, 2_000), components: [buttons] });
-  prompt.messageId = message.id;
+  // Persist before publishing the buttons. Discord can deliver a click as
+  // soon as the message is visible, so the handler must already be able to
+  // find the pending decision.
   await state.setPending(prompt);
+  try {
+    const message = await thread.send({ content: lines.join("\n").slice(0, 2_000), components: [buttons] });
+    prompt.messageId = message.id;
+    await state.setPending(prompt);
+  } catch (error) {
+    await state.clearPending(thread.id);
+    throw error;
+  }
 }
 
 async function presentQuestion(thread: ThreadChannel, question: { header: string; question: string; options: Array<{ label: string; description: string }> }): Promise<void> {
@@ -229,9 +238,17 @@ async function presentQuestion(thread: ThreadChannel, question: { header: string
   const optionsText = question.options.length
     ? `\n\n${question.options.map((option) => `• ${option.label}${option.description ? ` — ${option.description}` : ""}`).join("\n")}`
     : "";
-  const message = await thread.send({ content: `❓ ${question.header}\n\n${question.question}${optionsText}`.slice(0, 2_000), components: rows });
-  prompt.messageId = message.id;
+  // Persist before publishing the buttons; otherwise a fast click can race
+  // the state write and be rejected as an inactive prompt.
   await state.setPending(prompt);
+  try {
+    const message = await thread.send({ content: `❓ ${question.header}\n\n${question.question}${optionsText}`.slice(0, 2_000), components: rows });
+    prompt.messageId = message.id;
+    await state.setPending(prompt);
+  } catch (error) {
+    await state.clearPending(thread.id);
+    throw error;
+  }
 }
 
 async function handleButton(interaction: ButtonInteraction): Promise<void> {
@@ -256,36 +273,53 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     await interaction.reply({ content: "That approval button is malformed.", flags: MessageFlags.Ephemeral });
     return;
   }
-  // Consume before acknowledging the component. Two near-simultaneous
-  // clicks must not enqueue two turns for the same decision.
+  const record = state.getThread(threadId);
+  if (!record) {
+    await interaction.reply({ content: "That session no longer exists.", flags: MessageFlags.Ephemeral });
+    return;
+  }
+
+  // Consume before acknowledging the component so two near-simultaneous
+  // clicks cannot enqueue two turns. If Discord rejects the acknowledgement,
+  // restore the prompt below so the valid decision is not lost.
   const pending = await state.consumePending(threadId, token, kind as PendingPrompt["kind"]);
   if (!pending) {
     await interaction.reply({ content: "That prompt is no longer active.", flags: MessageFlags.Ephemeral });
     return;
   }
 
-  await interaction.update({ components: [] });
-  const record = state.getThread(threadId);
-  if (!record) return;
-
   let answer: string;
+  let acknowledgement: string;
   if (pending.kind === "approval") {
     const approved = parts[4] === "approve";
     answer = approved
       ? `[APPROVAL GRANTED] I approve this action: ${pending.action}. Proceed now.`
       : `[APPROVAL DENIED] Do not perform this action: ${pending.action}. Acknowledge and stop.`;
-    await thread.send(approved ? `✅ Approved: ${pending.action}` : `🛑 Denied: ${pending.action}`);
+    acknowledgement = approved ? `✅ Approved: ${pending.action}` : `🛑 Denied: ${pending.action}`;
   } else {
-    const option = pending.options[Number(parts[4] ?? "-1")];
+    const optionIndex = Number(parts[4] ?? "-1");
+    const option = Number.isInteger(optionIndex) && optionIndex >= 0 ? pending.options[optionIndex] : undefined;
     if (!option) {
-      await thread.send("That option could not be found. Please reply in your own words.");
+      await state.setPending(pending);
+      await interaction.reply({ content: "That option could not be found. Please reply in your own words.", flags: MessageFlags.Ephemeral });
       return;
     }
     answer = `${pending.header}: ${option.label}`;
-    await thread.send(`✅ ${pending.header}: ${option.label}`);
+    acknowledgement = `✅ ${pending.header}: ${option.label}`;
   }
+
+  try {
+    await interaction.update({ components: [] });
+  } catch (error) {
+    await state.setPending(pending);
+    throw error;
+  }
+
+  // Queue the decision before sending the cosmetic acknowledgement. If the
+  // acknowledgement message fails, the answer has still reached Aside.
   const wasBusy = queueForThread(threadId, () => runTurn(thread, record, answer));
-  if (wasBusy) await thread.send("📥 Queued — I’ll handle that after the current turn.");
+  await thread.send(acknowledgement).catch((error) => console.error("Could not post decision acknowledgement:", error));
+  if (wasBusy) await thread.send("📥 Queued — I’ll handle that after the current turn.").catch(() => undefined);
 }
 
 async function createThread(interaction: ChatInputCommandInteraction): Promise<void> {
