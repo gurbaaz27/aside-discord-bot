@@ -214,10 +214,9 @@ async function presentApproval(thread: ThreadChannel, approval: { action: string
   await state.setPending(prompt);
   try {
     const message = await thread.send({ content: lines.join("\n").slice(0, 2_000), components: [buttons] });
-    prompt.messageId = message.id;
-    await state.setPending(prompt);
+    await state.updatePendingMessage(thread.id, prompt.token, message.id);
   } catch (error) {
-    await state.clearPending(thread.id);
+    await state.clearPending(thread.id, prompt.token);
     throw error;
   }
 }
@@ -243,10 +242,9 @@ async function presentQuestion(thread: ThreadChannel, question: { header: string
   await state.setPending(prompt);
   try {
     const message = await thread.send({ content: `❓ ${question.header}\n\n${question.question}${optionsText}`.slice(0, 2_000), components: rows });
-    prompt.messageId = message.id;
-    await state.setPending(prompt);
+    await state.updatePendingMessage(thread.id, prompt.token, message.id);
   } catch (error) {
-    await state.clearPending(thread.id);
+    await state.clearPending(thread.id, prompt.token);
     throw error;
   }
 }
@@ -282,11 +280,12 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
   // Consume before acknowledging the component so two near-simultaneous
   // clicks cannot enqueue two turns. If Discord rejects the acknowledgement,
   // restore the prompt below so the valid decision is not lost.
-  const pending = await state.consumePending(threadId, token, kind as PendingPrompt["kind"]);
-  if (!pending) {
+  const claim = await state.consumePending(threadId, token, kind as PendingPrompt["kind"]);
+  if (!claim) {
     await interaction.reply({ content: "That prompt is no longer active.", flags: MessageFlags.Ephemeral });
     return;
   }
+  const pending = claim.pending;
 
   let answer: string;
   let acknowledgement: string;
@@ -300,7 +299,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
     const optionIndex = Number(parts[4] ?? "-1");
     const option = Number.isInteger(optionIndex) && optionIndex >= 0 ? pending.options[optionIndex] : undefined;
     if (!option) {
-      await state.setPending(pending);
+      await state.restorePendingIfUnchanged(claim);
       await interaction.reply({ content: "That option could not be found. Please reply in your own words.", flags: MessageFlags.Ephemeral });
       return;
     }
@@ -311,7 +310,7 @@ async function handleButton(interaction: ButtonInteraction): Promise<void> {
   try {
     await interaction.update({ components: [] });
   } catch (error) {
-    await state.setPending(pending);
+    await state.restorePendingIfUnchanged(claim);
     throw error;
   }
 
@@ -434,7 +433,8 @@ async function handleMessage(message: Message): Promise<void> {
   if (!prompt) return;
   // A free-form reply is also a valid answer to a question without buttons.
   // Retire the old prompt so it cannot be answered again later.
-  if (state.getPending(message.channel.id)) await state.clearPending(message.channel.id);
+  const pending = state.getPending(message.channel.id);
+  if (pending) await state.clearPending(message.channel.id, pending.token);
   await state.touchThread(message.channel.id);
   const wasBusy = queueForThread(message.channel.id, () => runTurn(message.channel as ThreadChannel, record, prompt));
   if (wasBusy) await message.channel.send("📥 Queued — I’ll handle that after the current turn.");

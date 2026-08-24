@@ -32,12 +32,18 @@ export type PendingPrompt =
       messageId?: string;
     };
 
+export type PendingClaim = {
+  pending: PendingPrompt;
+  revision: number;
+};
+
 type PersistedState = {
   threads: Record<string, ThreadRecord>;
   pending: Record<string, PendingPrompt>;
+  pendingRevisions: Record<string, number>;
 };
 
-const emptyState = (): PersistedState => ({ threads: {}, pending: {} });
+const emptyState = (): PersistedState => ({ threads: {}, pending: {}, pendingRevisions: {} });
 
 export class StateStore {
   private state: PersistedState = emptyState();
@@ -55,6 +61,7 @@ export class StateStore {
       this.state = {
         threads: parsed.threads ?? {},
         pending: parsed.pending ?? {},
+        pendingRevisions: parsed.pendingRevisions ?? {},
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -90,20 +97,49 @@ export class StateStore {
 
   async setPending(prompt: PendingPrompt): Promise<void> {
     this.state.pending[prompt.threadId] = prompt;
+    this.bumpPendingRevision(prompt.threadId);
     await this.persist();
   }
 
-  async clearPending(threadId: string): Promise<void> {
+  async clearPending(threadId: string, expectedToken?: string): Promise<boolean> {
+    const current = this.state.pending[threadId];
+    if (expectedToken && current && current.token !== expectedToken) return false;
     delete this.state.pending[threadId];
+    this.bumpPendingRevision(threadId);
     await this.persist();
+    return true;
   }
 
-  async consumePending(threadId: string, token: string, kind: PendingPrompt["kind"]): Promise<PendingPrompt | undefined> {
+  async updatePendingMessage(threadId: string, token: string, messageId: string): Promise<boolean> {
+    const pending = this.state.pending[threadId];
+    if (!pending || pending.token !== token) return false;
+    pending.messageId = messageId;
+    await this.persist();
+    return true;
+  }
+
+  async consumePending(threadId: string, token: string, kind: PendingPrompt["kind"]): Promise<PendingClaim | undefined> {
     const pending = this.state.pending[threadId];
     if (!pending || pending.token !== token || pending.kind !== kind) return undefined;
     delete this.state.pending[threadId];
+    const revision = this.bumpPendingRevision(threadId);
     await this.persist();
-    return pending;
+    return { pending, revision };
+  }
+
+  async restorePendingIfUnchanged(claim: PendingClaim): Promise<boolean> {
+    const threadId = claim.pending.threadId;
+    if (this.state.pendingRevisions[threadId] !== claim.revision || this.state.pending[threadId]) return false;
+    this.state.pending[threadId] = claim.pending;
+    this.bumpPendingRevision(threadId);
+    await this.persist();
+    return true;
+  }
+
+  private bumpPendingRevision(threadId: string): number {
+    const revision = (this.state.pendingRevisions[threadId] ?? 0) + 1;
+    this.state.pendingRevisions[threadId] = revision;
+    return revision;
   }
 
   private async persist(): Promise<void> {
