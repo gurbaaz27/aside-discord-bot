@@ -110,6 +110,11 @@ export class StateStore {
     return true;
   }
 
+  async invalidatePendingRevision(threadId: string): Promise<void> {
+    this.bumpPendingRevision(threadId);
+    await this.persist();
+  }
+
   async updatePendingMessage(threadId: string, token: string, messageId: string): Promise<boolean> {
     const pending = this.state.pending[threadId];
     if (!pending || pending.token !== token) return false;

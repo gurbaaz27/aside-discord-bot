@@ -24,6 +24,22 @@ describe("pending decision lifecycle", () => {
     }
   });
 
+  test("does not restore a prompt after a free-form answer supersedes it", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aside-state-"));
+    try {
+      const store = new StateStore(directory);
+      await store.load();
+      await store.setPending(approval("thread", "old"));
+      const claim = await store.consumePending("thread", "old", "approval");
+      expect(claim).toBeDefined();
+      await store.invalidatePendingRevision("thread");
+      expect(await store.restorePendingIfUnchanged(claim!)).toBe(false);
+      expect(store.getPending("thread")).toBeUndefined();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   test("does not restore a stale prompt over a newer prompt", async () => {
     const directory = await mkdtemp(join(tmpdir(), "aside-state-"));
     try {

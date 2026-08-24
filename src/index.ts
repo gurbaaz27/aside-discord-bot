@@ -212,12 +212,19 @@ async function presentApproval(thread: ThreadChannel, approval: { action: string
   // soon as the message is visible, so the handler must already be able to
   // find the pending decision.
   await state.setPending(prompt);
+  let message;
   try {
-    const message = await thread.send({ content: lines.join("\n").slice(0, 2_000), components: [buttons] });
-    await state.updatePendingMessage(thread.id, prompt.token, message.id);
+    message = await thread.send({ content: lines.join("\n").slice(0, 2_000), components: [buttons] });
   } catch (error) {
     await state.clearPending(thread.id, prompt.token);
     throw error;
+  }
+  try {
+    await state.updatePendingMessage(thread.id, prompt.token, message.id);
+  } catch (error) {
+    // messageId is optional; keep the already-persisted token usable if this
+    // metadata write fails after Discord has published the buttons.
+    console.error("Could not persist approval message id:", error);
   }
 }
 
@@ -240,12 +247,17 @@ async function presentQuestion(thread: ThreadChannel, question: { header: string
   // Persist before publishing the buttons; otherwise a fast click can race
   // the state write and be rejected as an inactive prompt.
   await state.setPending(prompt);
+  let message;
   try {
-    const message = await thread.send({ content: `❓ ${question.header}\n\n${question.question}${optionsText}`.slice(0, 2_000), components: rows });
-    await state.updatePendingMessage(thread.id, prompt.token, message.id);
+    message = await thread.send({ content: `❓ ${question.header}\n\n${question.question}${optionsText}`.slice(0, 2_000), components: rows });
   } catch (error) {
     await state.clearPending(thread.id, prompt.token);
     throw error;
+  }
+  try {
+    await state.updatePendingMessage(thread.id, prompt.token, message.id);
+  } catch (error) {
+    console.error("Could not persist question message id:", error);
   }
 }
 
@@ -434,7 +446,14 @@ async function handleMessage(message: Message): Promise<void> {
   // A free-form reply is also a valid answer to a question without buttons.
   // Retire the old prompt so it cannot be answered again later.
   const pending = state.getPending(message.channel.id);
-  if (pending) await state.clearPending(message.channel.id, pending.token);
+  if (pending) {
+    await state.clearPending(message.channel.id, pending.token);
+  } else {
+    // A button handler may have consumed the prompt while its Discord
+    // acknowledgement is still in flight. Advance the revision even though
+    // there is no pending row, preventing stale restoration.
+    await state.invalidatePendingRevision(message.channel.id);
+  }
   await state.touchThread(message.channel.id);
   const wasBusy = queueForThread(message.channel.id, () => runTurn(message.channel as ThreadChannel, record, prompt));
   if (wasBusy) await message.channel.send("📥 Queued — I’ll handle that after the current turn.");
