@@ -86,6 +86,39 @@ Text and Discord attachments are forwarded to Aside. Attachments are downloaded 
 
 For actions that need a decision, the agent is instructed not to use Aside's desktop-only question or confirmation tools. It emits a small protocol block instead; the bot renders it as Discord buttons. Approval and question choices are persisted, so a button can still be handled after a bot restart.
 
+## Run continuously with launchd
+
+On macOS, `launchd` is preferable to `tmux` or `screen` for a permanent bot. It starts the bot after login, restarts it if it exits, and writes logs to `.data/logs/`.
+
+From the project root:
+
+```bash
+bash service/install.sh
+```
+
+The installer:
+
+- detects the active Bun binary (or accepts `BUN_PATH=/absolute/path/to/bun`)
+- generates a user-specific plist in `~/Library/LaunchAgents/`
+- uses the project directory as the working directory so Bun loads `.env`
+- validates and loads the service
+
+Manage the service with:
+
+```bash
+launchctl print gui/$(id -u)/com.gurbaaz.aside-discord-bot
+tail -f .data/logs/bot.log .data/logs/bot-error.log
+launchctl kickstart -k gui/$(id -u)/com.gurbaaz.aside-discord-bot
+```
+
+To stop and remove it:
+
+```bash
+bash service/uninstall.sh
+```
+
+`service/com.gurbaaz.aside-discord-bot.plist.template` is available if you prefer to install or customize the plist manually. The Mac must be awake and the user account must be logged in.
+
 ## Security and operational notes
 
 - The bot has the same local access as the user running it. Aside sessions are prepared with `full-access` and `finalConfirm: false` so unattended agent work can function; understand that this allows filesystem, browser, and external side effects.
