@@ -14,6 +14,33 @@ function isSessionDirectory(name: string): boolean {
   return name.includes("_");
 }
 
+export async function readAssistantTextSince(path: string, offset: number): Promise<string> {
+  try {
+    // stat().size is a byte offset. BunFile.slice() preserves that byte-based
+    // offset while avoiding a read of the transcript prefix.
+    const tail = await Bun.file(path).slice(offset).text();
+    const texts: string[] = [];
+    for (const line of tail.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const row = JSON.parse(line) as { role?: string; content?: unknown };
+        if (row.role !== "assistant" || !Array.isArray(row.content)) continue;
+        for (const part of row.content) {
+          if (part && typeof part === "object" && (part as { type?: string }).type === "text") {
+            const text = (part as { text?: unknown }).text;
+            if (typeof text === "string" && text.trim()) texts.push(text);
+          }
+        }
+      } catch {
+        // Aside may be appending a partial JSON line while we read it.
+      }
+    }
+    return texts.join("\n\n");
+  } catch {
+    return "";
+  }
+}
+
 export class AsideBridge {
   private sessionCreationQueue: Promise<void> = Promise.resolve();
 
@@ -93,7 +120,7 @@ export class AsideBridge {
       effort: options.effort ?? this.config.asideEffort,
       signal: options.signal,
     });
-    const latest = transcript ? await this.assistantTextSince(transcript, offset) : "";
+    const latest = transcript ? await readAssistantTextSince(transcript, offset) : "";
     return { result, response: latest || result.stdout.trim() };
   }
 
@@ -229,31 +256,4 @@ export class AsideBridge {
     }
   }
 
-  private async assistantTextSince(path: string, offset: number): Promise<string> {
-    try {
-      const content = await readFile(path);
-      // stat().size is a byte offset; slicing a UTF-16 string would drift as
-      // soon as an earlier transcript line contained non-ASCII text.
-      const tail = content.subarray(offset).toString("utf8");
-      const texts: string[] = [];
-      for (const line of tail.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        try {
-          const row = JSON.parse(line) as { role?: string; content?: unknown };
-          if (row.role !== "assistant" || !Array.isArray(row.content)) continue;
-          for (const part of row.content) {
-            if (part && typeof part === "object" && (part as { type?: string }).type === "text") {
-              const text = (part as { text?: unknown }).text;
-              if (typeof text === "string" && text.trim()) texts.push(text);
-            }
-          }
-        } catch {
-          // Aside may be appending a partial JSON line while we read it.
-        }
-      }
-      return texts.join("\n\n");
-    } catch {
-      return "";
-    }
-  }
 }

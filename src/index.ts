@@ -16,10 +16,11 @@ import {
   type TextChannel,
   type ThreadChannel,
 } from "discord.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { AsideBridge } from "./aside.ts";
 import { loadConfig, type Config } from "./config.ts";
+import { writeResponseBodyToFile } from "./file-io.ts";
 import { parseApproval, parseQuestion, removeProtocolBlocks } from "./protocol.ts";
 import { StateStore, type PendingPrompt, type ThreadRecord } from "./state.ts";
 
@@ -112,12 +113,10 @@ async function saveAttachment(message: Message, attachment: { url: string; name?
   await mkdir(mediaDir, { recursive: true });
   const response = await fetch(attachment.url);
   if (!response.ok) throw new Error(`download returned HTTP ${response.status}`);
-  const body = await response.arrayBuffer();
-  if (body.byteLength > 25 * 1024 * 1024) throw new Error("attachment is larger than 25 MB");
   const original = attachment.name ?? "attachment";
   const suffix = extname(original).replace(/[^a-zA-Z0-9.]/g, "") || ".bin";
   const path = join(mediaDir, `${message.channel.id}-${Date.now()}${suffix}`);
-  await writeFile(path, Buffer.from(body));
+  await writeResponseBodyToFile(response, path, 25 * 1024 * 1024);
   return path;
 }
 
