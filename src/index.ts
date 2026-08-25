@@ -88,7 +88,7 @@ const ephemeral = (
 
 async function saveAttachment(
   message: Message,
-  attachment: { url: string; name?: string | null },
+  attachment: { id: string; url: string; name?: string | null },
 ): Promise<string> {
   const mediaDir = join(config.dataDir, "media");
   await mkdir(mediaDir, { recursive: true });
@@ -96,7 +96,9 @@ async function saveAttachment(
   if (!response.ok) throw new Error(`download returned HTTP ${response.status}`);
   const original = attachment.name ?? "attachment";
   const suffix = extname(original).replace(/[^a-zA-Z0-9.]/g, "") || ".bin";
-  const path = join(mediaDir, `${message.channel.id}-${Date.now()}${suffix}`);
+  // Keyed by message and attachment id, not a timestamp: two attachments on
+  // one message would otherwise land on the same path and overwrite.
+  const path = join(mediaDir, `${message.channel.id}-${message.id}-${attachment.id}${suffix}`);
   await writeResponseBodyToFile(response, path, 25 * 1024 * 1024);
   return path;
 }
