@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { Context } from "effect";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -84,3 +85,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     dataDir: resolve(expandHome(value.DATA_DIR)),
   };
 }
+
+/**
+ * The application configuration as an Effect service.
+ *
+ * Declared as a `Reference` so tests can override it with a fixture config
+ * while production code gets `loadConfig()` lazily on first access.
+ */
+export const AppConfig = Context.Reference<Config>("bot/AppConfig", {
+  defaultValue: loadConfig,
+});
