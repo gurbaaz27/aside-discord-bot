@@ -55,6 +55,7 @@ describe("per-thread turn queue", () => {
         AsideBridge,
         AsideBridge.of({
           createSession: Effect.succeed("session-1"),
+          markRead: () => Effect.void,
           sessionTitle: () => Effect.succeed(undefined),
           sessionMessageFile: () => Effect.succeed(undefined),
           run: (_sessionId, prompt) =>

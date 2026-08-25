@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { Effect, Fiber, Layer, Schedule } from "effect";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AsideBridge } from "../src/aside.ts";
 import { AppConfig, type Config } from "../src/config.ts";
 
@@ -123,4 +123,23 @@ wait
         }),
     );
   }, 20_000);
+
+  test("marks a session read through a short REPL call", async () => {
+    const args = await withFakeCli(
+      (signalled) => `#!/usr/bin/env bun
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(join(dirname(signalled), "args"))}, JSON.stringify(process.argv.slice(-2)));
+`,
+      (aside, paths) =>
+        Effect.gen(function* () {
+          yield* aside.markRead('session"with-quote');
+          return yield* Effect.promise(() => readFile(join(dirname(paths.signalled), "args"), "utf8"));
+        }),
+    );
+
+    expect(JSON.parse(args)).toEqual([
+      "repl",
+      'aside.sessions.markRead("session\\\"with-quote")',
+    ]);
+  });
 });
