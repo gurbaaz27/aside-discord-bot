@@ -116,7 +116,7 @@ async function saveAttachment(
   return path;
 }
 
-const handleButton = Effect.fn("bot.handleButton")(function* (interaction: ButtonInteraction) {
+export const handleButton = Effect.fn("bot.handleButton")(function* (interaction: ButtonInteraction) {
   const state = yield* StateStore;
   const turns = yield* TurnRunner;
   const aside = yield* AsideBridge;
@@ -336,7 +336,7 @@ const handleCommand = Effect.fn("bot.handleCommand")(function* (
   }
 });
 
-const handleMessage = Effect.fn("bot.handleMessage")(function* (message: Message) {
+export const handleMessage = Effect.fn("bot.handleMessage")(function* (message: Message) {
   const state = yield* StateStore;
   const turns = yield* TurnRunner;
   const aside = yield* AsideBridge;
@@ -471,4 +471,6 @@ async function main(): Promise<void> {
   await client.login(config.discordToken);
 }
 
-await main();
+if (import.meta.main) {
+  await main();
+}
