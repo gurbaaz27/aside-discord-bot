@@ -139,6 +139,22 @@ function formatElapsed(startedAt: number): string {
   return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
+async function syncThreadTitle(thread: ThreadChannel, record: ThreadRecord): Promise<void> {
+  const asideTitle = await aside.sessionTitle(record.sessionId);
+  if (!asideTitle) return;
+  const title = shortText(asideTitle, 100);
+  if (!title) return;
+  try {
+    if (thread.name !== title) await thread.setName(title);
+    if (record.title !== title) {
+      record.title = title;
+      await state.setThread(record);
+    }
+  } catch (error) {
+    console.error(`Could not sync Discord thread title for ${thread.id}:`, error);
+  }
+}
+
 async function runTurn(thread: ThreadChannel, record: ThreadRecord, prompt: string): Promise<void> {
   const controller = new AbortController();
   const startedAt = Date.now();
@@ -161,6 +177,7 @@ async function runTurn(thread: ThreadChannel, record: ThreadRecord, prompt: stri
       effort: record.effort ?? config.asideEffort,
       signal: controller.signal,
     });
+    await syncThreadTitle(thread, record);
     const approval = parseApproval(response);
     const question = approval ? undefined : parseQuestion(response);
     const visible = approval || question ? removeProtocolBlocks(response) : response;

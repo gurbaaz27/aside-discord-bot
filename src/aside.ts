@@ -97,6 +97,26 @@ export class AsideBridge {
     return { result, response: latest || result.stdout.trim() };
   }
 
+  async sessionTitle(sessionId: string): Promise<string | undefined> {
+    const startMarker = "__ASIDE_SESSION_TITLE__";
+    const endMarker = "__END_ASIDE_SESSION_TITLE__";
+    const expression = `console.log(${JSON.stringify(startMarker)} + JSON.stringify((await aside.sessions.get(${JSON.stringify(sessionId)})).title) + ${JSON.stringify(endMarker)})`;
+    const result = await this.execRepl(expression);
+    if (result.code !== 0) {
+      console.warn(`Could not read Aside session title for ${sessionId}: ${result.stderr || result.stdout}`);
+      return undefined;
+    }
+    const encoded = result.stdout.match(new RegExp(`${startMarker}(.*?)${endMarker}`, "s"))?.[1];
+    if (!encoded) return undefined;
+    try {
+      const title = JSON.parse(encoded) as unknown;
+      return typeof title === "string" && title.trim() ? title.trim() : undefined;
+    } catch {
+      console.warn(`Could not parse Aside session title for ${sessionId}`);
+      return undefined;
+    }
+  }
+
   private async prepareSession(sessionId: string): Promise<void> {
     const expression = `aside.sessions.update(${JSON.stringify(sessionId)}, { permissionMode: 'full-access', runtimeConfig: { finalConfirm: false } })`;
     const result = await this.execRepl(expression);
