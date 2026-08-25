@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeResponseBodyToFile } from "../src/file-io.ts";
@@ -17,6 +17,10 @@ function chunkedResponse(chunks: string[], headers?: HeadersInit): Response {
   );
 }
 
+async function temporaryFiles(directory: string): Promise<string[]> {
+  return (await readdir(directory)).filter((name) => name.endsWith(".part"));
+}
+
 describe("bounded response file writes", () => {
   test("streams a multi-chunk body up to the exact limit", async () => {
     const directory = await mkdtemp(join(tmpdir(), "aside-download-"));
@@ -25,7 +29,7 @@ describe("bounded response file writes", () => {
       const bytes = await writeResponseBodyToFile(chunkedResponse(["ab", "cd"], { "content-length": "4" }), path, 4);
       expect(bytes).toBe(4);
       expect(await Bun.file(path).text()).toBe("abcd");
-      expect(await Bun.file(`${path}.part`).exists()).toBe(false);
+      expect(await temporaryFiles(directory)).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -39,7 +43,7 @@ describe("bounded response file writes", () => {
         writeResponseBodyToFile(chunkedResponse(["abc", "de"], { "content-length": "2" }), path, 4),
       ).rejects.toThrow("attachment is larger than 25 MB");
       expect(await Bun.file(path).exists()).toBe(false);
-      expect(await Bun.file(`${path}.part`).exists()).toBe(false);
+      expect(await temporaryFiles(directory)).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -53,7 +57,7 @@ describe("bounded response file writes", () => {
         "attachment is larger than 25 MB",
       );
       expect(await Bun.file(path).exists()).toBe(false);
-      expect(await Bun.file(`${path}.part`).exists()).toBe(false);
+      expect(await temporaryFiles(directory)).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -67,7 +71,7 @@ describe("bounded response file writes", () => {
         writeResponseBodyToFile(chunkedResponse(["abcde"], { "content-length": "5" }), path, 4),
       ).rejects.toThrow("attachment is larger than 25 MB");
       expect(await Bun.file(path).exists()).toBe(false);
-      expect(await Bun.file(`${path}.part`).exists()).toBe(false);
+      expect(await temporaryFiles(directory)).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -87,7 +91,7 @@ describe("bounded response file writes", () => {
       );
       await expect(writeResponseBodyToFile(response, path, 20)).rejects.toThrow("stream failed");
       expect(await Bun.file(path).exists()).toBe(false);
-      expect(await Bun.file(`${path}.part`).exists()).toBe(false);
+      expect(await temporaryFiles(directory)).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -100,7 +104,23 @@ describe("bounded response file writes", () => {
       expect(await writeResponseBodyToFile(new Response(null), path, 4)).toBe(0);
       expect(await Bun.file(path).exists()).toBe(true);
       expect((await Bun.file(path).bytes()).byteLength).toBe(0);
-      expect(await Bun.file(`${path}.part`).exists()).toBe(false);
+      expect(await temporaryFiles(directory)).toEqual([]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("isolates concurrent temporary files for the same destination", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "aside-download-"));
+    try {
+      const path = join(directory, "attachment.txt");
+      const results = await Promise.all([
+        writeResponseBodyToFile(chunkedResponse(["first"]), path, 10),
+        writeResponseBodyToFile(chunkedResponse(["second"]), path, 10),
+      ]);
+      expect(results.sort()).toEqual([5, 6]);
+      expect(["first", "second"]).toContain(await Bun.file(path).text());
+      expect(await temporaryFiles(directory)).toEqual([]);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

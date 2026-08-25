@@ -20,7 +20,7 @@ export async function writeResponseBodyToFile(
     }
   }
 
-  const temporary = `${destination}.part`;
+  const temporary = `${destination}.${crypto.randomUUID()}.part`;
   const reader = response.body?.getReader();
   const file = Bun.file(temporary);
   let sink: ReturnType<typeof file.writer> | undefined;

@@ -108,14 +108,17 @@ async function sendChunks(thread: ThreadChannel, text: string): Promise<void> {
   }
 }
 
-async function saveAttachment(message: Message, attachment: { url: string; name?: string | null }): Promise<string> {
+async function saveAttachment(
+  message: Message,
+  attachment: { id: string; url: string; name?: string | null },
+): Promise<string> {
   const mediaDir = join(config.dataDir, "media");
   await mkdir(mediaDir, { recursive: true });
   const response = await fetch(attachment.url);
   if (!response.ok) throw new Error(`download returned HTTP ${response.status}`);
   const original = attachment.name ?? "attachment";
   const suffix = extname(original).replace(/[^a-zA-Z0-9.]/g, "") || ".bin";
-  const path = join(mediaDir, `${message.channel.id}-${Date.now()}${suffix}`);
+  const path = join(mediaDir, `${message.channel.id}-${message.id}-${attachment.id}${suffix}`);
   await writeResponseBodyToFile(response, path, 25 * 1024 * 1024);
   return path;
 }
