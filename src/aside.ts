@@ -102,6 +102,7 @@ export class AsideBridge extends Context.Service<AsideBridge, {
     options?: { model?: string | undefined; effort?: string | undefined },
   ) => Effect.Effect<{ response: string; outcome: TurnOutcome }, AsideSpawnError>;
   readonly sessionTitle: (sessionId: string) => Effect.Effect<string | undefined, AsideSpawnError>;
+  readonly markRead: (sessionId: string) => Effect.Effect<void, AsideSpawnError>;
   readonly sessionMessageFile: (sessionId: string) => Effect.Effect<string | undefined>;
 }>()("bot/AsideBridge") {
   static readonly layer = Layer.effect(
@@ -150,7 +151,7 @@ export class AsideBridge extends Context.Service<AsideBridge, {
        * burning a real Aside turn. Bun.spawn is known-good for both, so it
        * stays until there is a reason to revisit.
        */
-      const spawnProcess = (args: ReadonlyArray<string>) =>
+      const spawnProcess = (args: ReadonlyArray<string>, timeoutMs = config.asideExecTimeoutMs) =>
         Effect.gen(function* () {
           yield* Effect.logDebug(`spawn ${config.asideCli} ${args.slice(0, -1).join(" ")}`);
           const child = yield* Effect.acquireRelease(
@@ -172,7 +173,7 @@ export class AsideBridge extends Context.Service<AsideBridge, {
               new Response(child.stdout as ReadableStream<Uint8Array>).text(),
               new Response(child.stderr as ReadableStream<Uint8Array>).text(),
             ]),
-          ).pipe(Effect.timeoutOption(config.asideExecTimeoutMs));
+          ).pipe(Effect.timeoutOption(timeoutMs));
 
           if (Option.isNone(collected)) {
             yield* Effect.logDebug("process timed out");
@@ -183,7 +184,8 @@ export class AsideBridge extends Context.Service<AsideBridge, {
           return { code, stdout, stderr } satisfies ExecResult;
         }).pipe(Effect.scoped);
 
-      const execRepl = (expression: string) => spawnProcess(["repl", expression]);
+      const execRepl = (expression: string, timeoutMs = config.asideExecTimeoutMs) =>
+        spawnProcess(["repl", expression], timeoutMs);
 
       const exec = (
         prompt: string,
@@ -243,6 +245,16 @@ export class AsideBridge extends Context.Service<AsideBridge, {
         if (!result || result.code !== 0) {
           yield* Effect.logWarning(
             `Could not prepare Aside session ${sessionId}: ${result?.stderr ?? "timed out"}`,
+          );
+        }
+      });
+
+      const markRead = Effect.fn("AsideBridge.markRead")(function* (sessionId: string) {
+        const expression = `aside.sessions.markRead(${JSON.stringify(sessionId)})`;
+        const result = yield* execRepl(expression, 5_000);
+        if (!result || result.code !== 0) {
+          yield* Effect.logWarning(
+            `Could not mark Aside session ${sessionId} read: ${result?.stderr || result?.stdout || "timed out"}`,
           );
         }
       });
@@ -347,7 +359,7 @@ export class AsideBridge extends Context.Service<AsideBridge, {
         return { response, outcome };
       });
 
-      return AsideBridge.of({ createSession, run, sessionTitle, sessionMessageFile });
+      return AsideBridge.of({ createSession, run, sessionTitle, markRead, sessionMessageFile });
     }),
   );
 }

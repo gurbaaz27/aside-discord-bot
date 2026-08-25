@@ -86,6 +86,19 @@ const ephemeral = (
     interaction.reply({ content: content.slice(0, 2_000), flags: MessageFlags.Ephemeral }),
   );
 
+const markSessionRead = Effect.fn("bot.markSessionRead")(function* (
+  aside: AsideBridge["Service"],
+  sessionId: string,
+) {
+  yield* aside.markRead(sessionId).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning(`Could not mark Aside session ${sessionId} read: ${String(cause)}`),
+    ),
+    // Read state is advisory; never delay or block the Discord turn on it.
+    Effect.forkDetach,
+  );
+});
+
 async function saveAttachment(
   message: Message,
   attachment: { id: string; url: string; name?: string | null },
@@ -106,6 +119,7 @@ async function saveAttachment(
 const handleButton = Effect.fn("bot.handleButton")(function* (interaction: ButtonInteraction) {
   const state = yield* StateStore;
   const turns = yield* TurnRunner;
+  const aside = yield* AsideBridge;
 
   if (!isOwner(interaction.user.id)) {
     return yield* ephemeral(interaction, "This bot is private.");
@@ -128,6 +142,8 @@ const handleButton = Effect.fn("bot.handleButton")(function* (interaction: Butto
   if (!record) {
     return yield* ephemeral(interaction, "That session no longer exists.");
   }
+
+  yield* markSessionRead(aside, record.sessionId);
 
   // Consume before acknowledging the component so two near-simultaneous
   // clicks cannot enqueue two turns. If Discord rejects the acknowledgement,
@@ -323,6 +339,7 @@ const handleCommand = Effect.fn("bot.handleCommand")(function* (
 const handleMessage = Effect.fn("bot.handleMessage")(function* (message: Message) {
   const state = yield* StateStore;
   const turns = yield* TurnRunner;
+  const aside = yield* AsideBridge;
 
   if (
     message.author.bot ||
@@ -349,6 +366,10 @@ const handleMessage = Effect.fn("bot.handleMessage")(function* (message: Message
   }
   const prompt = parts.join("\n\n");
   if (!prompt) return;
+
+  // Discord does not expose a supported read receipt to bots. A subsequent
+  // owner message is our conservative signal that the session was revisited.
+  yield* markSessionRead(aside, record.sessionId);
 
   // A free-form reply is also a valid answer to a question without buttons.
   // Retire the old prompt so it cannot be answered again later.
