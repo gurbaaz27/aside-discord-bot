@@ -4,6 +4,12 @@ Use your local [Aside](https://aside.so) browser agent from Discord. Every bot-c
 
 This is a macOS bridge: Discord talks to a Bun process, and the Bun process invokes the local `aside` CLI. No web server or public tunnel is required.
 
+## Demo
+
+<video src="https://github.com/gurbaaz27/aside-discord-bot/releases/download/v0.1.0/aside-discord-bot-demo.mp4" controls>
+  <a href="https://github.com/gurbaaz27/aside-discord-bot/releases/download/v0.1.0/aside-discord-bot-demo.mp4">Watch the demo</a>
+</video>
+
 ## How it works
 
 ```text
